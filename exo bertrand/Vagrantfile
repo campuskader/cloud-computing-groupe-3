@@ -1,0 +1,54 @@
+Vagrant.configure(2) do |config|
+  config.cache.auto_detect = true
+
+  # utilisation de l'image ubuntu 22.04 
+  config.vm.box = "generic/ubuntu2204"
+  config.vm.box_url = "generic/ubuntu2204"
+
+
+  hosts = [
+      { :hostname => "lb",            :ip => "192.168.56.10", :cpus => 2, :mem => 2048, :script => "setup_lb.sh" },
+      { :hostname => "web1",          :ip => "192.168.56.11", :cpus => 1, :mem => 2048, :script => "setup_web.sh" },
+      { :hostname => "web2",          :ip => "192.168.56.12", :cpus => 1, :mem => 2048, :script => "setup_web.sh" },
+      { :hostname => "db-master",     :ip => "192.168.56.13", :cpus => 1, :mem => 2048, :script => "setup_db_master.sh" },
+      { :hostname => "db-slave",      :ip => "192.168.56.14", :cpus => 1, :mem => 2048, :script => "setup_db_slave.sh" },
+      { :hostname => "monitoring",    :ip => "192.168.56.15", :cpus => 1, :mem => 2048, :script => "setup_monitoring.sh" },
+      { :hostname => "client",        :ip => "192.168.56.16", :cpus => 1, :mem => 2048 }
+  ]
+
+  hosts.each do |host|
+      config.vm.define host[:hostname] do |node|
+          node.vm.hostname = host[:hostname]
+          node.vm.network "private_network", ip: host[:ip]
+          node.vm.provider "virtualbox" do |vb|
+              vb.memory = host[:mem]
+              vb.cpus = host[:cpus]
+            end
+    
+    # Mise a jours des packets sur tous les serveurs et installation de packet de base
+    node.vm.provision "shell", inline: <<-SHELL
+      sudo apt update -qq 2>&1 >/dev/null
+      sudo apt install -y -qq curl software-properties-common vim net-tools \
+      telnet 2>&1 >/dev/null
+      
+      # installation de prometheus-node-exporter sur tous les noeux du cluster pour le monitoring
+      sudo apt install -y -qq prometheus-node-exporter 2>&1 >/dev/null
+      
+      sudo sed -i '/127.0.2.1 #{host[:hostname]}/d' /etc/hosts
+      echo "#{host[:ip]} #{host[:hostname]}" | sudo tee -a /etc/hosts
+    SHELL
+    
+          # Vérifier si :script est défini avant d'ajouter la provision
+          if host.key?(:script) && !host[:script].empty?
+          node.vm.provision "shell", path: "scripts/#{host[:script]}"
+          else
+              node.vm.provision "file", source: "scripts/test_lb.sh", destination: "/home/vagrant/test_lb.sh"
+      node.vm.provision "shell", inline: <<-SHELL
+        # execution d'un script de test qui effectue un curl dans une boucle pour le nombre de boucle est specifier en parametre
+        sudo chmod +x /home/vagrant/test_lb.sh
+        /home/vagrant/test_lb.sh 30
+      SHELL
+    end
+      end
+  end
+end
